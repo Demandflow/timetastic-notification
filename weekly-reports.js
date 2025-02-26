@@ -2,11 +2,14 @@
 // This script fetches time-off data from the Time-tastic API and generates a weekly report
 
 // Import required modules
-const axios = require('axios');
-const moment = require('moment');
+import axios from 'axios';
+import moment from 'moment';
 // Comment out nodemailer as we're not using email
-// const nodemailer = require('nodemailer');
-require('dotenv').config();
+// import nodemailer from 'nodemailer';
+import { config as dotenvConfig } from 'dotenv';
+
+// Initialize environment variables
+dotenvConfig();
 
 // Configuration
 const config = {
@@ -517,32 +520,38 @@ async function generateWeeklyReport() {
   }
 }
 
-// Comment out the immediate execution when running with the scheduler
-// generateWeeklyReport();
+// Instead of using node-cron, we'll export a module format for Cloudflare Workers
+// Remove the cron schedule code
 
-// Schedule this to run automatically every Friday at 7:00 AM GMT
-// using node-cron
-const cron = require('node-cron');
-
-// Schedule task to run every Friday at 7:00 AM GMT
-// The cron format is: second(optional) minute hour day-of-month month day-of-week
-cron.schedule('0 7 * * 5', () => { // 0 seconds, 7 hours (7AM), any day, any month, 5 (Friday)
-  console.log(`Running scheduled report at ${new Date().toLocaleString()}`);
-  generateWeeklyReport();
-});
-
-console.log('Weekly report scheduler started. Will run every Friday at 7:00 AM GMT.');
-console.log(`Next execution will be on the coming Friday at 7:00 AM GMT.`);
-console.log(`Server time is currently ${new Date().toLocaleString()}`);
-
-// Export functions for testing
-module.exports = {
-  getUpcomingWeekDateRange,
-  getDepartments,
-  getUsers,
-  getAbsenceTypes,
-  getHolidays,
-  generateWeeklyReport
+// This is what Cloudflare Workers needs - an export default with handlers
+export default {
+  // Handle scheduled events (this will be triggered by Cloudflare's cron)
+  async scheduled(event, env, ctx) {
+    console.log(`Running scheduled report at ${new Date().toLocaleString()}`);
+    await generateWeeklyReport();
+    return new Response("Report generated successfully");
+  },
+  
+  // Handle HTTP requests (optional - for manual triggering via HTTP request)
+  async fetch(request, env, ctx) {
+    // Add environment variables from Cloudflare
+    if (env.TIMETASTIC_API_KEY) {
+      process.env.TIMETASTIC_API_KEY = env.TIMETASTIC_API_KEY;
+    }
+    
+    if (env.SLACK_WEBHOOK_URL) {
+      process.env.SLACK_WEBHOOK_URL = env.SLACK_WEBHOOK_URL;
+    }
+    
+    console.log(`Manual report generation requested at ${new Date().toLocaleString()}`);
+    try {
+      await generateWeeklyReport();
+      return new Response("Report generated successfully", { status: 200 });
+    } catch (error) {
+      console.error("Error generating report:", error);
+      return new Response(`Error generating report: ${error.message}`, { status: 500 });
+    }
+  }
 };
 
 // Format a date to show the day of week prominently
