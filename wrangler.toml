@@ -1,6 +1,6 @@
 name = "timetastic-weekly-report"
 main = "weekly-reports.js"
-compatibility_date = "2023-05-18"
+compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 
 [triggers]
