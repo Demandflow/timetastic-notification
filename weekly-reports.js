@@ -450,36 +450,62 @@ async function sendSlackNotification(message) {
     return;
   }
 
+  // Log the Slack webhook URL (partially masked for security)
+  console.log(`Slack webhook config - enabled: ${config.slackWebhook.enabled}`);
+  if (config.slackWebhook.url) {
+    console.log(`Slack webhook URL available: Yes (starts with: ${config.slackWebhook.url.substring(0, 15)}...)`);
+  } else {
+    console.error('Slack webhook URL is not defined or empty');
+    return;
+  }
+
   try {
-    console.log('Sending notification to Slack webhook...');
+    console.log('Preparing to send notification to Slack webhook...');
+    console.log('Message blocks count:', message.blocks ? message.blocks.length : 0);
+    
+    // Log the first few characters of the message for debugging
+    console.log('Message preview:', JSON.stringify(message).substring(0, 100) + '...');
+    
+    console.log('Sending POST request to Slack webhook...');
     const response = await axios.post(config.slackWebhook.url, message);
-    console.log('Slack notification sent successfully', response.status, response.statusText);
+    console.log('Slack API response status:', response.status, response.statusText);
+    console.log('Slack notification sent successfully');
+    return true;
   } catch (error) {
     console.error('Error sending Slack notification:', error.message);
+    
     // Check if this is a network error
     if (error.code) {
       console.error('Network error code:', error.code);
       console.error('This may be a temporary network issue or a problem with the Slack webhook URL.');
-      console.error('Webhook URL:', config.slackWebhook.url.substring(0, 30) + '...');
+      console.error('Webhook URL (masked):', config.slackWebhook.url.substring(0, 30) + '...');
     }
+    
     // Check if we have a response
     if (error.response) {
-      console.error('Response data:', error.response.data);
+      console.error('Response data:', JSON.stringify(error.response.data));
       console.error('Response status:', error.response.status);
-      console.error('Response headers:', error.response.headers);
+      console.error('Response headers:', JSON.stringify(error.response.headers));
     }
+    
+    return false;
   }
 }
 
 // Main function to run the weekly report
 async function generateWeeklyReport() {
   console.log('Generating weekly team absence report...');
+  console.log('Environment check - TIMETASTIC_API_KEY exists:', !!process.env.TIMETASTIC_API_KEY);
+  console.log('Environment check - SLACK_WEBHOOK_URL exists:', !!process.env.SLACK_WEBHOOK_URL);
+  
   try {
     // Get the next week's date range
     const dateRange = getUpcomingWeekDateRange();
     console.log(`Date range: ${dateRange.start} to ${dateRange.end}`);
     
     // We don't need to reinitialize the timetasticClient - it's already initialized at the top of the file
+    console.log('Starting API calls to Timetastic...');
+    
     // Get all the data we need concurrently
     const [departments, users, absenceTypes, holidays] = await Promise.all([
       getDepartments(),
@@ -488,12 +514,21 @@ async function generateWeeklyReport() {
       getHolidays(dateRange.start, dateRange.end, config.timetastic.apiKey),
     ]);
     
+    console.log(`Data fetched: ${departments.length} departments, ${users.length} users, ${absenceTypes.length} absence types, ${holidays.length} holidays`);
+    
     // Generate the Slack message with our new function
+    console.log('Generating Slack message...');
     const slackMessage = generateSlackMessage(departments, users, absenceTypes, holidays);
+    console.log('Slack message generated with', slackMessage.blocks ? slackMessage.blocks.length : 0, 'blocks');
     
     // Send the Slack message if enabled in config
+    console.log('Slack webhook enabled in config:', config.slackWebhook.enabled);
+    console.log('Slack webhook URL in config:', config.slackWebhook.url ? 'exists (starting with: ' + config.slackWebhook.url.substring(0, 15) + '...)' : 'missing');
+    
     if (config.slackWebhook.enabled) {
-      await sendSlackNotification(slackMessage);
+      console.log('Attempting to send Slack notification...');
+      const slackResult = await sendSlackNotification(slackMessage);
+      console.log('Slack notification result:', slackResult);
     } else {
       console.log('Slack notifications are disabled in config');
     }
@@ -515,7 +550,8 @@ async function generateWeeklyReport() {
     console.log('Weekly report generation completed successfully.');
     return { success: true };
   } catch (error) {
-    console.error('Error generating weekly report:', error);
+    console.error('Error generating weekly report:', error.message);
+    console.error('Error stack:', error.stack);
     return { success: false, error: error.message };
   }
 }
@@ -528,27 +564,48 @@ export default {
   // Handle scheduled events (this will be triggered by Cloudflare's cron)
   async scheduled(event, env, ctx) {
     console.log(`Running scheduled report at ${new Date().toLocaleString()}`);
+    
+    // Log partial environment variables to verify access
+    console.log(`TIMETASTIC_API_KEY available: ${env.TIMETASTIC_API_KEY ? 'Yes (starts with: ' + env.TIMETASTIC_API_KEY.substring(0, 5) + '...)' : 'No'}`);
+    console.log(`SLACK_WEBHOOK_URL available: ${env.SLACK_WEBHOOK_URL ? 'Yes (starts with: ' + env.SLACK_WEBHOOK_URL.substring(0, 15) + '...)' : 'No'}`);
+    
+    // Assign env variables to process.env
+    process.env.TIMETASTIC_API_KEY = env.TIMETASTIC_API_KEY;
+    process.env.SLACK_WEBHOOK_URL = env.SLACK_WEBHOOK_URL;
+    
     await generateWeeklyReport();
     return new Response("Report generated successfully");
   },
   
   // Handle HTTP requests (optional - for manual triggering via HTTP request)
   async fetch(request, env, ctx) {
+    console.log(`Manual report generation requested at ${new Date().toLocaleString()}`);
+    
+    // Log partial environment variables to verify access
+    console.log(`TIMETASTIC_API_KEY available: ${env.TIMETASTIC_API_KEY ? 'Yes (starts with: ' + env.TIMETASTIC_API_KEY.substring(0, 5) + '...)' : 'No'}`);
+    console.log(`SLACK_WEBHOOK_URL available: ${env.SLACK_WEBHOOK_URL ? 'Yes (starts with: ' + env.SLACK_WEBHOOK_URL.substring(0, 15) + '...)' : 'No'}`);
+    
     // Add environment variables from Cloudflare
     if (env.TIMETASTIC_API_KEY) {
       process.env.TIMETASTIC_API_KEY = env.TIMETASTIC_API_KEY;
+    } else {
+      console.error("TIMETASTIC_API_KEY not available in environment");
     }
     
     if (env.SLACK_WEBHOOK_URL) {
       process.env.SLACK_WEBHOOK_URL = env.SLACK_WEBHOOK_URL;
+    } else {
+      console.error("SLACK_WEBHOOK_URL not available in environment");
     }
     
-    console.log(`Manual report generation requested at ${new Date().toLocaleString()}`);
     try {
-      await generateWeeklyReport();
-      return new Response("Report generated successfully", { status: 200 });
+      console.log("Beginning report generation process...");
+      // Add more detailed logging for the Slack integration
+      const result = await generateWeeklyReport();
+      console.log("Report generation result:", JSON.stringify(result));
+      return new Response("Report generated successfully. Check logs for details.", { status: 200 });
     } catch (error) {
-      console.error("Error generating report:", error);
+      console.error("Error generating report:", error.message, error.stack);
       return new Response(`Error generating report: ${error.message}`, { status: 500 });
     }
   }
